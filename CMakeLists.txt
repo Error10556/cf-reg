@@ -18,7 +18,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(xlnt)
 
-add_executable(cfreg main.cpp)
+add_executable(cfreg main.cpp u8.cpp)
 target_link_libraries(cfreg PRIVATE xlnt)
 target_compile_options(cfreg PRIVATE -Wall -Wextra)
 target_compile_features(cfreg PRIVATE cxx_std_26)
