@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.30)
 project(CF-Reg VERSION 1.0.0 LANGUAGES CXX)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(BUILD_SHARED_LIBS OFF)
 
@@ -19,3 +20,5 @@ FetchContent_MakeAvailable(xlnt)
 
 add_executable(cfreg main.cpp)
 target_link_libraries(cfreg PRIVATE xlnt)
+target_compile_options(cfreg PRIVATE -Wall -Wextra)
+target_compile_features(cfreg PRIVATE cxx_std_26)
