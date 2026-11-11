@@ -3,9 +3,19 @@ project(CF-Reg VERSION 1.0.0 LANGUAGES CXX)
 
 set(BUILD_SHARED_LIBS OFF)
 
-# Download https://github.com/xlnt-community/xlnt at tag v1.6.1 to /xlnt if needed
-# Add targets
+include(FetchContent)
+
+# xlnt uses its own option for static builds rather than BUILD_SHARED_LIBS.
+set(STATIC ON CACHE BOOL "Build xlnt as a static library" FORCE)
+
+FetchContent_Declare(
+    xlnt
+    GIT_REPOSITORY https://github.com/xlnt-community/xlnt.git
+    GIT_TAG v1.6.1
+    GIT_SHALLOW TRUE
+    SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/xlnt"
+)
+FetchContent_MakeAvailable(xlnt)
 
 add_executable(cfreg main.cpp)
-target_include_directories(cfreg ${CMAKE_PROJECT_SOURCE_DIR}/xlnt/include)
-target_link_libraries(cfreg STATIC #[[xlnt library]])
+target_link_libraries(cfreg PRIVATE xlnt)
