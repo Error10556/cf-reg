@@ -5,7 +5,6 @@
 #include <filesystem>
 #include <generator>
 #include <iterator>
-#include <limits>
 #include <ranges>
 #include <span>
 #include <sstream>
@@ -18,8 +17,6 @@
 #include "passwords.hpp"
 #include "u8.hpp"
 #include "xlnt/worksheet/major_order.hpp"
-
-using std::literals::operator""s;
 
 namespace {
 struct recognized_column_names {
@@ -113,7 +110,7 @@ std::expected<xlnt::workbook, std::string> open_wb(std::filesystem::path path) {
   xlnt::workbook wb;
   try {
     wb.load(xlnt::path{path});
-  } catch (xlnt::exception exc) {
+  } catch (xlnt::exception& exc) {
     std::ostringstream out;
     std::ranges::copy(u8"Не открылся файл " | view_static_cast<char>,
                       std::ostream_iterator<char>(out));
@@ -239,7 +236,7 @@ std::expected<void, std::string> XLSheet::Complete() const {
 
   try {
     wb->save(filename);
-  } catch (xlnt::exception exc) {
+  } catch (xlnt::exception& exc) {
     std::ostringstream out;
     std::ranges::copy(u8"Не удалось сохранить документ " | view_static_cast<char>,
                       std::ostream_iterator<char>(out));
