@@ -5,10 +5,11 @@ bash scripts/build-windows.sh
 bash scripts/test-windows.sh
 ```
 
-The build creates the native WinAPI GUI `cfreg-gui.exe` and CLI `cfreg.exe`,
-then packages them with the required MinGW runtime DLLs in
-`build-win/cfreg-windows-x86_64.zip`. Extract the archive and keep the DLLs
-beside the executables. Launch with workbook paths:
+The build creates the native WinAPI GUI `cfreg-gui.exe` and CLI `cfreg.exe`.
+The distribution in `build-win/cfreg-windows-x86_64.zip` includes the GUI,
+the project's BSD Zero Clause `LICENSE`, and dependency licenses.
+The CLI and README are excluded. The GUI statically links the MinGW runtimes.
+Extract the archive and launch with workbook paths:
 
 ```powershell
 .\cfreg-gui.exe "participants.xlsx"
@@ -28,3 +29,7 @@ recommended after Wine verification.
 
 On Linux the default build provides the CLI. The GUI requires a Windows target.
 Old Qt build artifacts under `build-win/qt*` are unused and can be removed.
+
+Project-owned files are licensed under BSD Zero Clause (SPDX: `0BSD`); see
+`LICENSE`. Dependencies retain their respective licenses in the distribution's
+`licenses` directory.

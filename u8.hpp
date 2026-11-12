@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: 0BSD
 #pragma once
 #include <ranges>
 #include <string>

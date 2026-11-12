@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: 0BSD
 #include <iostream>
 #include <span>
 #include <sstream>

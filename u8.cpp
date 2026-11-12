@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: 0BSD
 #include "u8.hpp"
 
 #include <cstdint>

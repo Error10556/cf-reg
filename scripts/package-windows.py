@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""Bundle the native Windows executables and their MinGW runtime DLLs."""
+# SPDX-License-Identifier: 0BSD
+"""Bundle the native Windows GUI and project/dependency licenses."""
 from pathlib import Path
-import re
 import shutil
-import subprocess
 import zipfile
 
 root = Path(__file__).resolve().parent.parent
 work = root / "build-win"
 dist = work / "native-dist"
 dist.mkdir(exist_ok=True)
-for name in ("cfreg.exe", "cfreg-gui.exe"):
-    shutil.copy2(work / "native" / name, dist / name)
+for name in ("cfreg.exe", "README", "README.txt", "README.md"):
+    (dist / name).unlink(missing_ok=True)
+shutil.copy2(work / "native/cfreg-gui.exe", dist / "cfreg-gui.exe")
+shutil.copy2(root / "LICENSE", dist / "LICENSE")
 
 licenses = dist / "licenses"
 licenses.mkdir(exist_ok=True)
@@ -22,13 +23,6 @@ for dependency in (work / "native/_deps").glob("*-src"):
                 destination = licenses / dependency.name
                 destination.mkdir(exist_ok=True)
                 shutil.copy2(source, destination / source.name)
-(dist / "README.txt").write_text(
-    "CF-Reg for 64-bit Windows\n\n"
-    "Launch the native WinAPI GUI with workbook paths, for example:\n"
-    '  cfreg-gui.exe "participants.xlsx"\n\n'
-    "cfreg.exe provides the command-line interface.\n",
-    encoding="utf-8",
-)
 archive = work / "cfreg-windows-x86_64.zip"
 with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
     for source in sorted(dist.rglob("*")):

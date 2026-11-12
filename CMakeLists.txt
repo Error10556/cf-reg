@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: 0BSD
 cmake_minimum_required(VERSION 3.30)
 
 set(CACHE{CMAKE_CXX_FLAGS_LLDEBUG} TYPE STRING VALUE "-O0 -glldb -fstandalone-debug")
