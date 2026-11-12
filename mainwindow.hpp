@@ -19,4 +19,6 @@ private:
   std::vector<XLSheet> sheets;
   HWND window = nullptr, selection = nullptr, status = nullptr;
   HWND buttons[3]{};
+  HFONT font = nullptr;
+  int dpi = 96;
 };

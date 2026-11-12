@@ -42,6 +42,10 @@ void copy_text(HWND owner, const std::wstring& text) {
 } // namespace
 
 MainWindow::MainWindow(std::vector<XLSheet> sheets) : sheets(std::move(sheets)) {
+  if (auto dc = GetDC(nullptr)) {
+    dpi = GetDeviceCaps(dc, LOGPIXELSY);
+    ReleaseDC(nullptr, dc);
+  }
   const auto instance = GetModuleHandleW(nullptr);
   WNDCLASSW cls{};
   cls.lpfnWndProc = procedure;
@@ -52,7 +56,8 @@ MainWindow::MainWindow(std::vector<XLSheet> sheets) : sheets(std::move(sheets)) 
   if (!RegisterClassW(&cls) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS)
     throw std::runtime_error("Cannot register the window class.");
   window = CreateWindowExW(WS_EX_CONTROLPARENT, cls.lpszClassName, L"CF-Reg",
-      WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, 720, 260,
+      WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
+      MulDiv(900, dpi, 96), MulDiv(280, dpi, 96),
       nullptr, nullptr, instance, this);
   if (!window) throw std::runtime_error("Cannot create the main window.");
 }
@@ -62,12 +67,16 @@ MainWindow::~MainWindow() {
 }
 
 void MainWindow::create_controls() {
+  font = CreateFontW(-MulDiv(12, dpi, 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+      DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+      DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+  if (!font) throw std::runtime_error("Cannot create the interface font.");
   auto control = [this](const wchar_t* type, const wchar_t* text, DWORD style, int id) {
     auto child = CreateWindowExW(0, type, text, WS_CHILD | WS_VISIBLE | style,
         0, 0, 0, 0, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
         GetModuleHandleW(nullptr), nullptr);
     if (!child) throw std::runtime_error("Cannot create a window control.");
-    SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(GetStockObject(DEFAULT_GUI_FONT)), TRUE);
+    SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
     return child;
   };
   selection = control(L"COMBOBOX", L"", WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST, Selection);
@@ -90,12 +99,13 @@ void MainWindow::create_controls() {
 }
 
 void MainWindow::layout(int width, int height) {
-  const int content = std::max(0, width - 24);
-  MoveWindow(selection, 12, 12, content, 260, TRUE);
-  const int button_width = std::max(0, (content - 16) / 3);
+  auto px = [this](int value) { return MulDiv(value, dpi, 96); };
+  const int content = std::max(0, width - px(24));
+  MoveWindow(selection, px(12), px(12), content, px(260), TRUE);
+  const int button_width = std::max(0, (content - px(16)) / 3);
   for (int i = 0; i < 3; ++i)
-    MoveWindow(buttons[i], 12 + i * (button_width + 8), 48, button_width, 32, TRUE);
-  MoveWindow(status, 12, 92, content, std::max(0, height - 104), TRUE);
+    MoveWindow(buttons[i], px(12) + i * (button_width + px(8)), px(48), button_width, px(32), TRUE);
+  MoveWindow(status, px(12), px(92), content, std::max(0, height - px(104)), TRUE);
 }
 
 void MainWindow::perform(int action) {
@@ -156,7 +166,7 @@ LRESULT CALLBACK MainWindow::procedure(HWND hwnd, UINT message, WPARAM wp, LPARA
       case WM_SIZE: self->layout(LOWORD(lp), HIWORD(lp)); return 0;
       case WM_GETMINMAXINFO: {
         auto info = reinterpret_cast<MINMAXINFO*>(lp);
-        info->ptMinTrackSize = {540, 220};
+        info->ptMinTrackSize = {MulDiv(840, self->dpi, 96), MulDiv(240, self->dpi, 96)};
         return 0;
       }
       case WM_COMMAND:
@@ -166,6 +176,8 @@ LRESULT CALLBACK MainWindow::procedure(HWND hwnd, UINT message, WPARAM wp, LPARA
         return 0;
       case WM_DESTROY: PostQuitMessage(0); return 0;
       case WM_NCDESTROY:
+        if (self->font) DeleteObject(self->font);
+        self->font = nullptr;
         self->window = nullptr;
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
         break;
