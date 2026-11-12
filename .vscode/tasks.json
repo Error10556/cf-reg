@@ -1,0 +1,25 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Compile",
+            "type": "shell",
+            "command": "cmake -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_BUILD_TYPE=LLDebug -S . -B build-lldebug/; cmake --build build-lldebug/ -j10; cp examples/ex1.xlsx build-lldebug/ex1.xlsx"
+        },
+        {
+            "label": "Compile G++",
+            "type": "shell",
+            "command": "g++ -ggdb ${relativeFile} -o ${fileBasenameNoExtension}.bin"
+        },
+        {
+            "label": "Compile-CS",
+            "type": "shell",
+            "command": "dotnet build"
+        },
+        {
+            "label": "Clean",
+            "type": "shell",
+            "command": "rm -f ${fileBasenameNoExtension}{,.bin}"
+        }
+    ]
+}

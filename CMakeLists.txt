@@ -1,4 +1,8 @@
 cmake_minimum_required(VERSION 3.30)
+
+set(CACHE{CMAKE_CXX_FLAGS_LLDEBUG} TYPE STRING VALUE "-O0 -glldb -fstandalone-debug")
+mark_as_advanced(CMAKE_CXX_FLAGS_LLDEBUG)
+
 project(CF-Reg VERSION 1.0.0 LANGUAGES CXX)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
