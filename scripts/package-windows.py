@@ -13,31 +13,6 @@ dist.mkdir(exist_ok=True)
 for name in ("cfreg.exe", "cfreg-gui.exe"):
     shutil.copy2(work / "native" / name, dist / name)
 
-search = [Path("/usr/x86_64-w64-mingw32/bin")]
-for name in ("libstdc++-6.dll", "libgcc_s_seh-1.dll", "libwinpthread-1.dll"):
-    location = subprocess.check_output(
-        ["x86_64-w64-mingw32-g++", f"-print-file-name={name}"], text=True
-    ).strip()
-    if Path(location).is_file():
-        search.append(Path(location).resolve().parent)
-available = {p.name.lower(): p for folder in search for p in folder.glob("*.dll")}
-pending = list(dist.glob("*.exe"))
-seen = set()
-while pending:
-    binary = pending.pop()
-    if binary.name.lower() in seen:
-        continue
-    seen.add(binary.name.lower())
-    imports = subprocess.check_output(["x86_64-w64-mingw32-objdump", "-p", binary], text=True)
-    for name in re.findall(r"DLL Name:\s*(\S+)", imports):
-        source = available.get(name.lower())
-        if source is not None and name.lower() not in seen:
-            target = dist / source.name
-            shutil.copy2(source, target)
-            pending.append(target)
-        elif name.lower().startswith(("libgcc", "libstdc++", "libwinpthread")) and source is None:
-            raise FileNotFoundError(f"Cannot locate MinGW runtime {name}")
-
 licenses = dist / "licenses"
 licenses.mkdir(exist_ok=True)
 for dependency in (work / "native/_deps").glob("*-src"):
@@ -49,7 +24,6 @@ for dependency in (work / "native/_deps").glob("*-src"):
                 shutil.copy2(source, destination / source.name)
 (dist / "README.txt").write_text(
     "CF-Reg for 64-bit Windows\n\n"
-    "Keep the DLLs beside the executables.\n"
     "Launch the native WinAPI GUI with workbook paths, for example:\n"
     '  cfreg-gui.exe "participants.xlsx"\n\n'
     "cfreg.exe provides the command-line interface.\n",

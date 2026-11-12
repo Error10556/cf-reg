@@ -50,7 +50,7 @@ if(CFREG_BUILD_GUI)
     add_executable(cfreg-gui WIN32 gui_main.cpp)
     target_link_libraries(cfreg-gui PRIVATE cfreg_widgets shell32)
     if(MINGW)
-        target_link_options(cfreg-gui PRIVATE -municode)
+        target_link_options(cfreg-gui PRIVATE -municode -static)
     endif()
 endif()
 
