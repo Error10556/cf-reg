@@ -1,34 +1,42 @@
 #include "mainwindow.hpp"
-#include "sheets.hpp"
-
 #include <OpenXLSX.hpp>
-#include <QApplication>
-#include <QClipboard>
-#include <QComboBox>
-#include <QLabel>
-#include <QPushButton>
-#include <QTemporaryDir>
+#include <chrono>
+#include <filesystem>
 #include <iostream>
+#include <source_location>
 #include <stdexcept>
 
 namespace {
-void require(bool condition) {
-  if (!condition) throw std::runtime_error("GUI regression check failed");
+void require(bool condition, std::source_location location = std::source_location::current()) {
+  if (!condition) throw std::runtime_error("GUI regression check failed at line " +
+                                          std::to_string(location.line()));
 }
-
-void run() {
+std::wstring text(HWND control) {
+  std::wstring result(GetWindowTextLengthW(control) + 1, L'\0');
+  result.resize(GetWindowTextW(control, result.data(), static_cast<int>(result.size())));
+  return result;
+}
+std::wstring clipboard(HWND owner) {
+  require(OpenClipboard(owner));
+  auto data = GetClipboardData(CF_UNICODETEXT);
+  auto value = data ? static_cast<const wchar_t*>(GlobalLock(data)) : nullptr;
+  std::wstring result = value ? value : L"";
+  if (value) GlobalUnlock(data);
+  CloseClipboard();
+  require(value != nullptr);
+  return result;
+}
+std::string utf8(const std::filesystem::path& path) {
+  auto value = path.u8string();
+  return std::string(value.begin(), value.end());
+}
+void run(const std::filesystem::path& dir) {
   MainWindow empty({});
-  require(!empty.findChild<QPushButton*>("checkButton")->isEnabled());
-  require(!empty.findChild<QPushButton*>("completeButton")->isEnabled());
-  require(!empty.findChild<QPushButton*>("formatButton")->isEnabled());
-
-  QTemporaryDir dir;
-  require(dir.isValid());
-  auto path = dir.filePath("participants.XLSX").toStdString();
-  auto missing = dir.filePath("missing.xlsx").toStdString();
-  std::string ignored = "ignored.txt";
+  for (int id : {MainWindow::Check, MainWindow::Complete, MainWindow::Format})
+    require(!IsWindowEnabled(GetDlgItem(empty.handle(), id)));
+  const auto path = dir / L"участники.XLSX";
   OpenXLSX::XLDocument doc;
-  doc.create(path, OpenXLSX::XLDoNotOverwrite);
+  doc.create(utf8(path), OpenXLSX::XLDoNotOverwrite);
   auto ws = doc.workbook().worksheet(1);
   ws.cell("A1").value() = "Contests";
   ws.cell("B1").value() = "Login";
@@ -39,42 +47,52 @@ void run() {
   doc.save();
   doc.close();
 
-  char* args[] = {path.data(), ignored.data(), missing.data()};
-  MainWindow window(sheets_from_paths(args));
-  auto* selection = window.findChild<QComboBox*>("workbookSelection");
-  auto* status = window.findChild<QLabel*>("status");
-  auto* check = window.findChild<QPushButton*>("checkButton");
-  auto* complete = window.findChild<QPushButton*>("completeButton");
-  auto* format = window.findChild<QPushButton*>("formatButton");
-  require(selection->count() == 2 && selection->itemText(0) == QString::fromStdString(path));
-  check->click();
-  require(status->text().contains("Participants: 1") && status->text().contains("Complete: no"));
-  complete->click();
-  require(status->text() == "Workbook completed and saved.");
-  check->click();
-  require(status->text().contains("Complete: yes"));
-  format->click();
-  const auto copied = QApplication::clipboard()->text();
-  require(copied.startsWith("123 | user1 | ") && copied.endsWith(QString::fromUtf8(" | Алиса")));
-  require(status->text() == "Codeforces table copied to clipboard.");
-  selection->setCurrentIndex(1);
-  require(status->text().isEmpty());
-  check->click();
-  require(status->text().startsWith("Error:"));
-  complete->click();
-  require(status->text().startsWith("Error:"));
-  format->click();
-  require(status->text().startsWith("Error:"));
-  require(QApplication::clipboard()->text() == copied);
+  MainWindow window({XLSheet(path), XLSheet(dir / "missing.xlsx")});
+  HWND hwnd = window.handle();
+  ShowWindow(hwnd, SW_SHOWNORMAL);
+  SetActiveWindow(hwnd);
+  HWND selection = GetDlgItem(hwnd, MainWindow::Selection);
+  HWND status = GetDlgItem(hwnd, MainWindow::Status);
+  require(SendMessageW(selection, CB_GETCOUNT, 0, 0) == 2);
+  std::wstring item(path.wstring().size() + 1, L'\0');
+  SendMessageW(selection, CB_GETLBTEXT, 0, reinterpret_cast<LPARAM>(item.data()));
+  item.resize(path.wstring().size());
+  require(item == path.wstring());
+  auto click = [hwnd](int id) {
+    SendMessageW(GetDlgItem(hwnd, id), BM_CLICK, 0, 0);
+  };
+  click(MainWindow::Check);
+  require(text(status).contains(L"Participants: 1") && text(status).contains(L"Complete: no"));
+  click(MainWindow::Complete);
+  require(text(status) == L"Workbook completed and saved.");
+  click(MainWindow::Check);
+  require(text(status).contains(L"Complete: yes"));
+  click(MainWindow::Format);
+  const auto copied = clipboard(hwnd);
+  require(copied.starts_with(L"123 | user1 | ") && copied.ends_with(L" | Алиса"));
+  require(text(status) == L"Codeforces table copied to clipboard.");
+  SendMessageW(selection, CB_SETCURSEL, 1, 0);
+  SendMessageW(hwnd, WM_COMMAND, MAKEWPARAM(MainWindow::Selection, CBN_SELCHANGE),
+               reinterpret_cast<LPARAM>(selection));
+  require(text(status).empty());
+  for (int id : {MainWindow::Check, MainWindow::Complete, MainWindow::Format}) {
+    click(id);
+    require(text(status).starts_with(L"Error:"));
+  }
+  require(clipboard(hwnd) == copied);
 }
 } // namespace
 
-int main(int argc, char** argv) {
-  QApplication app(argc, argv);
+int main() {
+  const auto dir = std::filesystem::temp_directory_path() /
+      ("cfreg-gui-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
   try {
-    run();
+    std::filesystem::create_directory(dir);
+    run(dir);
+    std::filesystem::remove_all(dir);
   } catch (const std::exception& exc) {
     std::cerr << exc.what() << '\n';
+    std::filesystem::remove_all(dir);
     return 1;
   }
 }

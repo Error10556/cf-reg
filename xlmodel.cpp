@@ -22,6 +22,11 @@
 #include "u8.hpp"
 
 namespace {
+
+std::string path_utf8(const std::filesystem::path& path) {
+  const auto text = path.u8string();
+  return std::string(text.begin(), text.end());
+}
 struct recognized_column_names {
 private:
   static constexpr bool any_contains(std::span<const std::u32string_view> smalls,
@@ -95,10 +100,10 @@ std::optional<SubsheetOfInterest> check_sheet(OpenXLSX::XLWorksheet ws) {
 std::expected<std::unique_ptr<OpenXLSX::XLDocument>, std::string> open_wb(const std::filesystem::path& path) {
   try {
     auto document = std::make_unique<OpenXLSX::XLDocument>();
-    document->open(path.string());
+    document->open(path_utf8(path));
     return document;
   } catch (const std::exception& exc) {
-    return std::unexpected("Не открылся файл " + path.string() + ": " + exc.what());
+    return std::unexpected("Не открылся файл " + path_utf8(path) + ": " + exc.what());
   }
 }
 
@@ -194,18 +199,18 @@ XLSheet::XLSheet(std::filesystem::path path) : filename{path} {}
 
 std::expected<XLSheet::Info, std::string> XLSheet::Check() const {
   using ret_t = std::expected<XLSheet::Info, std::string>;
-  return open_wb(filename.string()).and_then([this](std::unique_ptr<OpenXLSX::XLDocument> wb) -> ret_t {
+  return open_wb(filename).and_then([this](std::unique_ptr<OpenXLSX::XLDocument> wb) -> ret_t {
     auto sheet = check_wb(*wb);
-    if (!sheet) return std::unexpected(error_message_no_worksheets_matched(filename.string()));
+    if (!sheet) return std::unexpected(error_message_no_worksheets_matched(path_utf8(filename)));
     return {{sheet->rows.size(), check_completeness(*sheet)}};
   });
 }
 
 std::expected<void, std::string> XLSheet::Complete() const {
-  auto wb = open_wb(filename.string());
+  auto wb = open_wb(filename);
   if (!wb) return std::unexpected(wb.error());
   auto sheet = check_wb(**wb);
-  if (!sheet) return std::unexpected(error_message_no_worksheets_matched(filename.string()));
+  if (!sheet) return std::unexpected(error_message_no_worksheets_matched(path_utf8(filename)));
 
   auto [logins, prefix, highest] = extract_logins_to_fill(*sheet);
   auto passwords = extract_passwords_to_fill(*sheet);
@@ -223,7 +228,7 @@ std::expected<void, std::string> XLSheet::Complete() const {
   try {
     (*wb)->save();
   } catch (const std::exception& exc) {
-    return std::unexpected("Не удалось сохранить документ " + filename.string() + ": " + exc.what());
+    return std::unexpected("Не удалось сохранить документ " + path_utf8(filename) + ": " + exc.what());
   }
   if (!contest_content)
     return std::unexpected(
@@ -234,10 +239,10 @@ std::expected<void, std::string> XLSheet::Complete() const {
 }
 
 std::expected<std::string, std::string> XLSheet::FormatForCodeforcesUTF8() const {
-  auto wb = open_wb(filename.string());
+  auto wb = open_wb(filename);
   if (!wb) return std::unexpected(wb.error());
   auto sheet = check_wb(**wb);
-  if (!sheet) return std::unexpected(error_message_no_worksheets_matched(filename.string()));
+  if (!sheet) return std::unexpected(error_message_no_worksheets_matched(path_utf8(filename)));
   std::ostringstream result;
   bool first_row = true;
   for (auto row : sheet->rows) {
