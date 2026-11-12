@@ -1,25 +1,91 @@
+#include <algorithm>
 #include <filesystem>
+#include <iostream>
+#include <span>
+#include <sstream>
+#include <string>
+#include <string_view>
+#include <vector>
 #include <xlnt/xlnt.hpp>
 
 #include "u8.hpp"
 #include "xlmodel.hpp"
 
 int main(int argc, char** argv) {
-  using namespace std::literals;
-  using namespace std::placeholders;
   if (argc == 0) return 1;
   std::span<char*> argspan{argv + 1, static_cast<size_t>(argc - 1)};
   std::vector<XLSheet> sheets;
   for (auto cstr : argspan) {
     std::filesystem::path s{cstr};
     auto ext_u8 = s.extension().string();
-    if (std::ranges::equal(ext_u8 | view_toupper<char>, ".XLSX"))
+    if (std::ranges::equal(ext_u8 | view_toupper<char>, std::string_view(".XLSX")))
       sheets.emplace_back(xlnt::path{s});
   }
-  // TODO
-  // make a simple cli that calls methods of sheets[i], first selecting the index i.
+  if (sheets.empty()) {
+    std::cerr << "Usage: " << argv[0] << " FILE.xlsx [FILE.xlsx ...]\n";
+    return 1;
+  }
+
+  auto read_number = [](int& number) {
+    std::string line;
+    if (!std::getline(std::cin, line)) return false;
+    std::istringstream input(line);
+    char extra;
+    if (!(input >> number) || (input >> extra)) number = -2;
+    return true;
+  };
+
   while (true) {
-    // TODO
-    // index = -1 to exit
+    std::cout << "\nWorkbooks:\n";
+    for (size_t i = 0; i < sheets.size(); ++i)
+      std::cout << i << ": " << sheets[i].Filename().string() << '\n';
+    std::cout << "Select workbook index (-1 to exit): " << std::flush;
+    int index;
+    if (!read_number(index) || index == -1) return 0;
+    if (index < 0 || static_cast<size_t>(index) >= sheets.size()) {
+      std::cerr << "Invalid workbook index.\n";
+      continue;
+    }
+
+    auto& sheet = sheets[static_cast<size_t>(index)];
+    std::cout << "1: Check\n2: Complete and save\n3: Format for Codeforces\n"
+                 "0: Back\nSelect action: " << std::flush;
+    int action;
+    if (!read_number(action)) return 0;
+    try {
+      switch (action) {
+        case 0:
+          break;
+        case 1: {
+          auto result = sheet.Check();
+          if (result)
+            std::cout << "Participants: " << result->participant_count
+                      << "\nComplete: " << (result->complete ? "yes" : "no") << '\n';
+          else
+            std::cerr << "Error: " << result.error() << '\n';
+          break;
+        }
+        case 2: {
+          auto result = sheet.Complete();
+          if (result)
+            std::cout << "Workbook completed and saved.\n";
+          else
+            std::cerr << "Error: " << result.error() << '\n';
+          break;
+        }
+        case 3: {
+          auto result = sheet.FormatForCodeforcesUTF8();
+          if (result)
+            std::cout << *result << '\n';
+          else
+            std::cerr << "Error: " << result.error() << '\n';
+          break;
+        }
+        default:
+          std::cerr << "Invalid action.\n";
+      }
+    } catch (const std::exception& exc) {
+      std::cerr << "Error: " << exc.what() << '\n';
+    }
   }
 }
