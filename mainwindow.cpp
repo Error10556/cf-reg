@@ -103,20 +103,23 @@ void MainWindow::perform(int action) {
   if (index == CB_ERR || static_cast<size_t>(index) >= sheets.size()) return;
   const auto& sheet = sheets[static_cast<size_t>(index)];
   auto set_status = [this](const std::wstring& text) { SetWindowTextW(status, text.c_str()); };
+  auto check_status = [&sheet]() -> std::wstring {
+    auto result = sheet.Check();
+    if (!result) return L"Error: " + from_utf8(result.error());
+    return L"Participants: " + std::to_wstring(result->participant_count) +
+           L"\r\nComplete: " + (result->complete ? L"yes" : L"no");
+  };
   try {
     switch (action) {
       case Check: {
-        auto result = sheet.Check();
-        if (result)
-          set_status(L"Participants: " + std::to_wstring(result->participant_count) +
-                     L"\r\nComplete: " + (result->complete ? L"yes" : L"no"));
-        else
-          set_status(L"Error: " + from_utf8(result.error()));
+        set_status(check_status());
         break;
       }
       case Complete: {
         auto result = sheet.Complete();
-        set_status(result ? L"Workbook completed and saved." : L"Error: " + from_utf8(result.error()));
+        auto current_status = check_status();
+        if (!result) current_status += L"\r\nError: " + from_utf8(result.error());
+        set_status(current_status);
         break;
       }
       case Format: {
@@ -147,6 +150,9 @@ LRESULT CALLBACK MainWindow::procedure(HWND hwnd, UINT message, WPARAM wp, LPARA
   try {
     switch (message) {
       case WM_CREATE: self->create_controls(); return 0;
+      case WM_SHOWWINDOW:
+        if (wp) self->perform(Check);
+        break;
       case WM_SIZE: self->layout(LOWORD(lp), HIWORD(lp)); return 0;
       case WM_GETMINMAXINFO: {
         auto info = reinterpret_cast<MINMAXINFO*>(lp);
@@ -154,7 +160,7 @@ LRESULT CALLBACK MainWindow::procedure(HWND hwnd, UINT message, WPARAM wp, LPARA
         return 0;
       }
       case WM_COMMAND:
-        if (LOWORD(wp) == Selection && HIWORD(wp) == CBN_SELCHANGE) SetWindowTextW(self->status, L"");
+        if (LOWORD(wp) == Selection && HIWORD(wp) == CBN_SELCHANGE) self->perform(Check);
         else if (HIWORD(wp) == BN_CLICKED && LOWORD(wp) >= Check && LOWORD(wp) <= Format)
           self->perform(LOWORD(wp));
         return 0;

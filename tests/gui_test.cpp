@@ -17,7 +17,10 @@ std::wstring text(HWND control) {
   return result;
 }
 std::wstring clipboard(HWND owner) {
-  require(OpenClipboard(owner));
+  bool opened = false;
+  for (int attempt = 0; attempt < 50 && !(opened = OpenClipboard(owner)); ++attempt)
+    Sleep(10); // Another desktop process may briefly own the clipboard.
+  require(opened);
   auto data = GetClipboardData(CF_UNICODETEXT);
   auto value = data ? static_cast<const wchar_t*>(GlobalLock(data)) : nullptr;
   std::wstring result = value ? value : L"";
@@ -61,12 +64,9 @@ void run(const std::filesystem::path& dir) {
   auto click = [hwnd](int id) {
     SendMessageW(GetDlgItem(hwnd, id), BM_CLICK, 0, 0);
   };
-  click(MainWindow::Check);
   require(text(status).contains(L"Participants: 1") && text(status).contains(L"Complete: no"));
   click(MainWindow::Complete);
-  require(text(status) == L"Workbook completed and saved.");
-  click(MainWindow::Check);
-  require(text(status).contains(L"Complete: yes"));
+  require(text(status).contains(L"Participants: 1") && text(status).contains(L"Complete: yes"));
   click(MainWindow::Format);
   const auto copied = clipboard(hwnd);
   require(copied.starts_with(L"123 | user1 | ") && copied.ends_with(L" | Алиса"));
@@ -74,12 +74,25 @@ void run(const std::filesystem::path& dir) {
   SendMessageW(selection, CB_SETCURSEL, 1, 0);
   SendMessageW(hwnd, WM_COMMAND, MAKEWPARAM(MainWindow::Selection, CBN_SELCHANGE),
                reinterpret_cast<LPARAM>(selection));
-  require(text(status).empty());
+  require(text(status).starts_with(L"Error:"));
   for (int id : {MainWindow::Check, MainWindow::Complete, MainWindow::Format}) {
     click(id);
     require(text(status).starts_with(L"Error:"));
   }
   require(clipboard(hwnd) == copied);
+
+  SendMessageW(selection, CB_SETCURSEL, 0, 0);
+  SendMessageW(hwnd, WM_COMMAND, MAKEWPARAM(MainWindow::Selection, CBN_SELCHANGE),
+               reinterpret_cast<LPARAM>(selection));
+  require(text(status).contains(L"Participants: 1") && text(status).contains(L"Complete: yes"));
+
+  // Complete may save partial changes and still report missing contest data.
+  doc.open(utf8(path));
+  doc.workbook().worksheet(1).cell("A2").value().clear();
+  doc.save();
+  doc.close();
+  click(MainWindow::Complete);
+  require(text(status).contains(L"Complete: no") && text(status).contains(L"Error:"));
 }
 } // namespace
 
