@@ -12,7 +12,7 @@ std::vector<XLSheet> sheets_from_paths(std::span<char* const> paths) {
     std::filesystem::path path{cstr};
     auto extension = path.extension().string();
     if (std::ranges::equal(extension | view_toupper<char>, std::string_view(".XLSX")))
-      sheets.emplace_back(xlnt::path{path});
+      sheets.emplace_back(path);
   }
   return sheets;
 }

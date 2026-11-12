@@ -6,19 +6,35 @@ set(BUILD_SHARED_LIBS OFF)
 
 include(FetchContent)
 
-# xlnt uses its own option for static builds rather than BUILD_SHARED_LIBS.
-set(STATIC ON CACHE BOOL "Build xlnt as a static library" FORCE)
+set(OPENXLSX_CREATE_DOCS OFF CACHE BOOL "" FORCE)
+set(OPENXLSX_BUILD_SAMPLES OFF CACHE BOOL "" FORCE)
+set(OPENXLSX_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(OPENXLSX_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
+# Fetch pinned dependencies consistently, avoiding incompatible system packages.
+set(FORCE_FETCH_ALL ON CACHE BOOL "Fetch OpenXLSX dependencies" FORCE)
 
 FetchContent_Declare(
-    xlnt
-    GIT_REPOSITORY https://github.com/xlnt-community/xlnt.git
-    GIT_TAG 551e772b58668b494207c7ff63979476b403421f
+    OpenXLSX
+    GIT_REPOSITORY https://codeberg.org/lars_uffmann/OpenXLSX.git
+    GIT_TAG v0.5.2
     GIT_SHALLOW TRUE
-    SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/xlnt"
 )
-FetchContent_MakeAvailable(xlnt)
+# OpenXLSX v0.5.2 fetches miniz 3.0.2, whose policy baseline predates CMake 4.
+if(NOT DEFINED CMAKE_POLICY_VERSION_MINIMUM OR CMAKE_POLICY_VERSION_MINIMUM VERSION_LESS 3.5)
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+endif()
+FetchContent_MakeAvailable(OpenXLSX)
 
 add_executable(cfreg main.cpp sheets.cpp u8.cpp passwords.cpp xlmodel.cpp)
-target_link_libraries(cfreg PRIVATE xlnt)
+target_link_libraries(cfreg PRIVATE OpenXLSX::OpenXLSX)
 target_compile_options(cfreg PRIVATE -Wall -Wextra)
 target_compile_features(cfreg PRIVATE cxx_std_26)
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(xlmodel_test tests/xlmodel_test.cpp xlmodel.cpp passwords.cpp u8.cpp)
+    target_include_directories(xlmodel_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    target_link_libraries(xlmodel_test PRIVATE OpenXLSX::OpenXLSX)
+    target_compile_features(xlmodel_test PRIVATE cxx_std_26)
+    add_test(NAME xlmodel COMMAND xlmodel_test)
+endif()

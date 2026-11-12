@@ -3,20 +3,23 @@
 #include <algorithm>
 #include <charconv>
 #include <filesystem>
-#include <generator>
+#include <cstdint>
+#include <limits>
+#include <memory>
 #include <iterator>
+#include <optional>
 #include <ranges>
 #include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <tuple>
-#include <type_traits>
 #include <vector>
+
+#include <OpenXLSX.hpp>
 
 #include "passwords.hpp"
 #include "u8.hpp"
-#include "xlnt/worksheet/major_order.hpp"
 
 namespace {
 struct recognized_column_names {
@@ -46,85 +49,73 @@ public:
 }  // namespace
 
 struct ColumnsOfInterest {
-  xlnt_index_t contests;
-  xlnt_index_t login;
-  xlnt_index_t password;
-  xlnt_index_t name;
+  uint32_t contests;
+  uint32_t login;
+  uint32_t password;
+  uint32_t name;
 };
 
 struct SubsheetOfInterest {
-  xlnt::worksheet worksheet;
+  OpenXLSX::XLWorksheet worksheet;
   ColumnsOfInterest cols;
-  std::vector<xlnt_index_t> rows;
+  std::vector<uint32_t> rows;
 };
 
 namespace {
 
-std::optional<SubsheetOfInterest> check_sheet(xlnt::worksheet ws) {
-  auto first_row = ws.rows().front();
-  std::optional<xlnt_index_t> contests, login, password, name;
-  for (auto cell : first_row) {
-    auto content = [&]() {
-      auto raw = u8_to_u32(cell.to_string());
-      auto trimmed = trim(std::u32string_view(raw));
-      std::u32string res;
-      res.reserve(trimmed.size());
-      std::ranges::copy(trimmed | view_toupper<char32_t>, std::back_inserter(res));
-      return res;
-    }();
-    xlnt_index_t col = cell.column_index();
-    if (recognized_column_names::is_name(content))
-      name.emplace(col);
-    else if (recognized_column_names::is_login(content))
-      login.emplace(col);
-    else if (recognized_column_names::is_password(content))
-      password.emplace(col);
-    else if (recognized_column_names::is_contests(content))
-      contests.emplace(col);
+std::string cell_text(OpenXLSX::XLCell cell) {
+  if (cell.value().type() == OpenXLSX::XLValueType::Empty) return {};
+  return cell.value().getString();
+}
+
+bool empty(OpenXLSX::XLCell cell) { return cell_text(cell).empty(); }
+
+std::optional<SubsheetOfInterest> check_sheet(OpenXLSX::XLWorksheet ws) {
+  std::optional<uint32_t> contests, login, password, name;
+  const auto max_col = ws.columnCount();
+  const auto max_row = ws.rowCount();
+  for (uint32_t col = 1; col <= max_col; ++col) {
+    auto raw = u8_to_u32(cell_text(ws.cell(1, col)));
+    auto trimmed = trim(std::u32string_view(raw));
+    std::u32string content;
+    std::ranges::copy(trimmed | view_toupper<char32_t>, std::back_inserter(content));
+    if (recognized_column_names::is_name(content)) name = col;
+    else if (recognized_column_names::is_login(content)) login = col;
+    else if (recognized_column_names::is_password(content)) password = col;
+    else if (recognized_column_names::is_contests(content)) contests = col;
   }
   if (!contests || !login || !password || !name) return {};
-  std::vector<xlnt_index_t> rows;
-  xlnt_index_t name_v = *name;
-  auto dims = ws.calculate_dimension();
-  xlnt_index_t min_row = dims.top_left().row();
-  xlnt_index_t max_row = ws.calculate_dimension().bottom_right().row();
-  if (max_row > min_row)
-    for (auto cell :
-         xlnt::range(ws, xlnt::range_reference({name_v}, min_row + 1, {name_v}, max_row),
-                     xlnt::major_order::column, true)[0]) {
-      if (cell != nullptr) rows.emplace_back(cell.row());
-    }
-  return {{ws, {*contests, *login, *password, name_v}, std::move(rows)}};
+  std::vector<uint32_t> rows;
+  for (uint32_t row = 2; row <= max_row; ++row)
+    if (!empty(ws.cell(row, *name))) rows.push_back(row);
+  return SubsheetOfInterest{ws, {*contests, *login, *password, *name}, std::move(rows)};
 }
 
-// xlnt::workbook internally stores a pointer to its implementation. Do not pass by reference.
-std::generator<xlnt::worksheet> worksheets_starting_with_active(xlnt::workbook wb) {
-  auto active = wb.active_sheet();
-  co_yield active;
-  for (auto ws : wb) {
-    if (ws != active) co_yield ws;
-  }
-}
-
-std::expected<xlnt::workbook, std::string> open_wb(std::filesystem::path path) {
-  xlnt::workbook wb;
+// Keep the document at a stable address: OpenXLSX objects refer back to their owner.
+std::expected<std::unique_ptr<OpenXLSX::XLDocument>, std::string> open_wb(const std::filesystem::path& path) {
   try {
-    wb.load(xlnt::path{path});
-  } catch (xlnt::exception& exc) {
-    std::ostringstream out;
-    std::ranges::copy(u8"Не открылся файл " | view_static_cast<char>,
-                      std::ostream_iterator<char>(out));
-    out << path << ": " << exc.what() << " (" << exc.message() << ")";
-    return std::unexpected(std::move(out).str());
+    auto document = std::make_unique<OpenXLSX::XLDocument>();
+    document->open(path.string());
+    return document;
+  } catch (const std::exception& exc) {
+    return std::unexpected("Не открылся файл " + path.string() + ": " + exc.what());
   }
-  return {std::move(wb)};
 }
 
-// xlnt::workbook internally stores a pointer to its implementation. Do not pass by reference.
-std::optional<SubsheetOfInterest> check_wb(xlnt::workbook wb) {
-  for (auto ws : worksheets_starting_with_active(wb)) {
-    auto result = check_sheet(ws);
-    if (result) return result;
+std::optional<SubsheetOfInterest> check_wb(OpenXLSX::XLDocument& document) {
+  auto wb = document.workbook();
+  const auto names = wb.worksheetNames();
+  for (const auto& name : names) {
+    auto ws = wb.worksheet(name);
+    if (ws.isActive()) {
+      if (auto result = check_sheet(ws)) return result;
+      break;
+    }
+  }
+  for (const auto& name : names) {
+    auto ws = wb.worksheet(name);
+    if (!ws.isActive())
+      if (auto result = check_sheet(ws)) return result;
   }
   return {};
 }
@@ -132,7 +123,7 @@ std::optional<SubsheetOfInterest> check_wb(xlnt::workbook wb) {
 bool check_completeness(SubsheetOfInterest sheet) {
   for (auto row : sheet.rows)
     for (auto col : {sheet.cols.contests, sheet.cols.login, sheet.cols.password})
-      if (sheet.worksheet.cell({col}, row) == nullptr) return false;
+      if (empty(sheet.worksheet.cell(row, col))) return false;
   return true;
 }
 
@@ -144,23 +135,19 @@ std::string error_message_no_worksheets_matched(std::string_view filename) {
   return std::move(out).str();
 }
 
-std::tuple<std::vector<xlnt::cell>, std::string, unsigned long long> extract_logins_to_fill(
+std::tuple<std::vector<OpenXLSX::XLCell>, std::string, unsigned long long> extract_logins_to_fill(
     SubsheetOfInterest sheet) {
   auto ws = sheet.worksheet;
   std::string login_prefix = "user";
   unsigned long long login_highest = 0;
-  std::vector<xlnt::cell> logins_to_fill;
+  std::vector<OpenXLSX::XLCell> logins_to_fill;
   for (auto row : sheet.rows) {
-    const auto login_cell = ws.cell({sheet.cols.login}, row);
-    if (login_cell == nullptr) {
+    const auto login_cell = ws.cell(row, sheet.cols.login);
+    if (empty(login_cell)) {
       logins_to_fill.push_back(login_cell);
       continue;
     }
-    std::string login = login_cell.to_string();
-    if (login.empty()) {
-      logins_to_fill.push_back(login_cell);
-      continue;
-    }
+    std::string login = cell_text(login_cell);
     auto pos = login.find_last_not_of("0123456789");
     if (pos == std::string::npos || pos + 1 == login.size()) continue;
     unsigned long long number;
@@ -174,32 +161,28 @@ std::tuple<std::vector<xlnt::cell>, std::string, unsigned long long> extract_log
   return {std::move(logins_to_fill), login_prefix, login_highest};
 }
 
-std::vector<xlnt::cell> extract_passwords_to_fill(SubsheetOfInterest sheet) {
+std::vector<OpenXLSX::XLCell> extract_passwords_to_fill(SubsheetOfInterest sheet) {
   return sheet.rows |
          std::views::transform([ws = sheet.worksheet, col = sheet.cols.password](
-                                   xlnt_index_t ri) mutable { return ws.cell({col}, ri); }) |
-         std::views::cache_latest | std::views::filter([](xlnt::cell cell) {
-           return cell == nullptr || cell.to_string().empty();
+                                   uint32_t ri) mutable { return ws.cell(ri, col); }) |
+         std::views::cache_latest | std::views::filter([](OpenXLSX::XLCell cell) {
+           return empty(cell);
          }) |
-         std::ranges::to<std::vector<xlnt::cell>>();
+         std::ranges::to<std::vector<OpenXLSX::XLCell>>();
 }
 
-std::pair<std::vector<xlnt::cell>, std::optional<std::string>> extract_contests_to_fill(
+std::pair<std::vector<OpenXLSX::XLCell>, std::optional<std::string>> extract_contests_to_fill(
     SubsheetOfInterest sheet) {
-  std::pair<std::vector<xlnt::cell>, std::optional<std::string>> res;
+  std::pair<std::vector<OpenXLSX::XLCell>, std::optional<std::string>> res;
   auto& [to_fill, content] = res;
   auto ws = sheet.worksheet;
   for (auto row : sheet.rows) {
-    const auto cell = ws.cell({sheet.cols.contests}, row);
-    if (cell == nullptr) {
+    const auto cell = ws.cell(row, sheet.cols.contests);
+    if (empty(cell)) {
       to_fill.push_back(cell);
       continue;
     }
-    auto s = cell.to_string();
-    if (s.empty()) {
-      to_fill.push_back(cell);
-      continue;
-    }
+    auto s = cell_text(cell);
     if (!content) content.emplace(std::move(s));
   }
   return res;
@@ -207,12 +190,12 @@ std::pair<std::vector<xlnt::cell>, std::optional<std::string>> extract_contests_
 
 }  // namespace
 
-XLSheet::XLSheet(xlnt::path path) : filename{path} {}
+XLSheet::XLSheet(std::filesystem::path path) : filename{path} {}
 
 std::expected<XLSheet::Info, std::string> XLSheet::Check() const {
   using ret_t = std::expected<XLSheet::Info, std::string>;
-  return open_wb(filename.string()).and_then([this](xlnt::workbook wb) -> ret_t {
-    auto sheet = check_wb(wb);
+  return open_wb(filename.string()).and_then([this](std::unique_ptr<OpenXLSX::XLDocument> wb) -> ret_t {
+    auto sheet = check_wb(*wb);
     if (!sheet) return std::unexpected(error_message_no_worksheets_matched(filename.string()));
     return {{sheet->rows.size(), check_completeness(*sheet)}};
   });
@@ -221,26 +204,26 @@ std::expected<XLSheet::Info, std::string> XLSheet::Check() const {
 std::expected<void, std::string> XLSheet::Complete() const {
   auto wb = open_wb(filename.string());
   if (!wb) return std::unexpected(wb.error());
-  auto sheet = check_wb(*wb);
+  auto sheet = check_wb(**wb);
   if (!sheet) return std::unexpected(error_message_no_worksheets_matched(filename.string()));
 
   auto [logins, prefix, highest] = extract_logins_to_fill(*sheet);
   auto passwords = extract_passwords_to_fill(*sheet);
   auto [contests, contest_content] = extract_contests_to_fill(*sheet);
 
-  for (auto cell : logins) cell.value(prefix + std::to_string(++highest));
+  if (logins.size() > std::numeric_limits<unsigned long long>::max() - highest)
+    return std::unexpected("Login numbering would overflow.");
+
+  for (auto cell : logins) cell.value() = prefix + std::to_string(++highest);
   PasswordGenerator generate_password;
-  for (auto cell : passwords) cell.value(generate_password(10));
+  for (auto cell : passwords) cell.value() = generate_password(10);
   if (contest_content)
-    for (auto cell : contests) cell.value(*contest_content);
+    for (auto cell : contests) cell.value() = *contest_content;
 
   try {
-    wb->save(filename);
-  } catch (xlnt::exception& exc) {
-    std::ostringstream out;
-    std::ranges::copy(u8"Не удалось сохранить документ " | view_static_cast<char>,
-                      std::ostream_iterator<char>(out));
-    out << filename.string() << ": " << exc.what() << " (" << exc.message() << ")";
+    (*wb)->save();
+  } catch (const std::exception& exc) {
+    return std::unexpected("Не удалось сохранить документ " + filename.string() + ": " + exc.what());
   }
   if (!contest_content)
     return std::unexpected(
@@ -253,7 +236,7 @@ std::expected<void, std::string> XLSheet::Complete() const {
 std::expected<std::string, std::string> XLSheet::FormatForCodeforcesUTF8() const {
   auto wb = open_wb(filename.string());
   if (!wb) return std::unexpected(wb.error());
-  auto sheet = check_wb(*wb);
+  auto sheet = check_wb(**wb);
   if (!sheet) return std::unexpected(error_message_no_worksheets_matched(filename.string()));
   std::ostringstream result;
   bool first_row = true;
@@ -265,10 +248,10 @@ std::expected<std::string, std::string> XLSheet::FormatForCodeforcesUTF8() const
          {sheet->cols.contests, sheet->cols.login, sheet->cols.password, sheet->cols.name}) {
       if (!first_col) result << " | ";
       first_col = false;
-      result << sheet->worksheet.cell({col}, row).to_string();
+      result << cell_text(sheet->worksheet.cell(row, col));
     }
   }
   return std::move(result).str();
 }
 
-const xlnt::path& XLSheet::Filename() const { return filename; }
+const std::filesystem::path& XLSheet::Filename() const { return filename; }
