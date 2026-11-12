@@ -35,7 +35,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int show) {
     }
     return result == -1 ? 1 : static_cast<int>(message.wParam);
   } catch (const std::exception&) {
-    MessageBoxW(nullptr, L"Cannot start CF-Reg.", L"CF-Reg", MB_OK | MB_ICONERROR);
+    MessageBoxW(nullptr, L"Не удалось запустить CF-Reg.", L"CF-Reg", MB_OK | MB_ICONERROR);
     return 1;
   }
 }

@@ -71,7 +71,7 @@ void MainWindow::create_controls() {
     return child;
   };
   selection = control(L"COMBOBOX", L"", WS_TABSTOP | WS_VSCROLL | CBS_DROPDOWNLIST, Selection);
-  const wchar_t* labels[] = {L"Check", L"Complete and save", L"Format for Codeforces"};
+  const wchar_t* labels[] = {L"Проверить ещё раз", L"Заполнить", L"Скопировать для Codeforces"};
   for (int i = 0; i < 3; ++i) {
     buttons[i] = control(L"BUTTON", labels[i], WS_TABSTOP | BS_PUSHBUTTON, Check + i);
     EnableWindow(buttons[i], !sheets.empty());
@@ -83,7 +83,7 @@ void MainWindow::create_controls() {
   }
   if (sheets.empty()) {
     EnableWindow(selection, FALSE);
-    SetWindowTextW(status, L"No workbooks supplied. Launch cfreg-gui with one or more .xlsx file paths.");
+    SetWindowTextW(status, L"Нет файлов таблиц. Откройте одну или больше таблиц участников с помощью этой программы.");
   } else {
     SendMessageW(selection, CB_SETCURSEL, 0, 0);
   }
@@ -105,9 +105,9 @@ void MainWindow::perform(int action) {
   auto set_status = [this](const std::wstring& text) { SetWindowTextW(status, text.c_str()); };
   auto check_status = [&sheet]() -> std::wstring {
     auto result = sheet.Check();
-    if (!result) return L"Error: " + from_utf8(result.error());
-    return L"Participants: " + std::to_wstring(result->participant_count) +
-           L"\r\nComplete: " + (result->complete ? L"yes" : L"no");
+    if (!result) return L"ОШИБКА: " + from_utf8(result.error());
+    return L"Участников: " + std::to_wstring(result->participant_count) +
+           L"\r\nЗаполнено: " + (result->complete ? L"ДА" : L"НЕТ");
   };
   try {
     switch (action) {
@@ -118,7 +118,7 @@ void MainWindow::perform(int action) {
       case Complete: {
         auto result = sheet.Complete();
         auto current_status = check_status();
-        if (!result) current_status += L"\r\nError: " + from_utf8(result.error());
+        if (!result) current_status += L"\r\nОШИБКА: " + from_utf8(result.error());
         set_status(current_status);
         break;
       }
@@ -126,15 +126,15 @@ void MainWindow::perform(int action) {
         auto result = sheet.FormatForCodeforcesUTF8();
         if (result) {
           copy_text(window, from_utf8(*result));
-          set_status(L"Codeforces table copied to clipboard.");
+          set_status(L"Таблица для Codeforces скопирована в буфер обмена.");
         } else {
-          set_status(L"Error: " + from_utf8(result.error()));
+          set_status(L"ОШИБКА: " + from_utf8(result.error()));
         }
         break;
       }
     }
   } catch (const std::exception& exc) {
-    set_status(L"Error: " + from_utf8(exc.what()));
+    set_status(L"ОШИБКА: " + from_utf8(exc.what()));
   }
 }
 
@@ -172,7 +172,7 @@ LRESULT CALLBACK MainWindow::procedure(HWND hwnd, UINT message, WPARAM wp, LPARA
     }
   } catch (...) {
     if (message == WM_CREATE) return -1;
-    SetWindowTextW(self->status, L"Error: cannot complete this operation.");
+    SetWindowTextW(self->status, L"ОШИБКА: не удалось совершить операцию.");
     return 0;
   }
   return DefWindowProcW(hwnd, message, wp, lp);
