@@ -1,9 +1,11 @@
 #include "xlmodel.hpp"
 
 #include <algorithm>
+#include <charconv>
 #include <filesystem>
 #include <generator>
 #include <iterator>
+#include <limits>
 #include <ranges>
 #include <span>
 #include <sstream>
@@ -12,6 +14,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "passwords.hpp"
 #include "u8.hpp"
 #include "xlnt/worksheet/major_order.hpp"
 
@@ -65,7 +68,7 @@ std::optional<SubsheetOfInterest> check_sheet(xlnt::worksheet ws) {
   for (auto cell : first_row) {
     auto content = [&]() {
       auto raw = u8_to_u32(cell.to_string());
-      auto trimmed = trim(raw.subview());
+      auto trimmed = trim(std::u32string_view(raw));
       std::u32string res;
       res.reserve(trimmed.size());
       std::ranges::copy(trimmed | view_toupper<char32_t>, std::back_inserter(res));
@@ -118,23 +121,88 @@ std::expected<xlnt::workbook, std::string> open_wb(std::filesystem::path path) {
   return {std::move(wb)};
 }
 
-std::expected<std::optional<SubsheetOfInterest>, std::string> check_wb(std::filesystem::path path) {
-  using ret_t = std::expected<std::optional<SubsheetOfInterest>, std::string>;
-  return open_wb(path).and_then([](xlnt::workbook wb) -> ret_t {
-    for (auto ws : worksheets_starting_with_active(wb)) {
-      auto maybe_res = check_sheet(ws);
-      if (maybe_res) return {std::move(maybe_res)};
-    }
-    return {};
-  });
+std::optional<SubsheetOfInterest> check_wb(xlnt::workbook& wb) {
+  for (auto ws : worksheets_starting_with_active(wb)) {
+    auto result = check_sheet(ws);
+    if (result) return result;
+  }
+  return {};
 }
 
 bool check_completeness(SubsheetOfInterest sheet) {
+  for (auto row : sheet.rows)
+    for (auto col : {sheet.cols.contests, sheet.cols.login, sheet.cols.password})
+      if (sheet.worksheet.cell({col}, row) == nullptr) return false;
+  return true;
+}
+
+std::string error_message_no_worksheets_matched(std::string_view filename) {
+  std::ostringstream out;
+  std::ranges::copy(u8"Ни одна страница не содержит нужных столбцов: " | view_static_cast<char>,
+                    std::ostream_iterator<char>(out));
+  out << filename;
+  return std::move(out).str();
+}
+
+std::tuple<std::vector<xlnt::cell>, std::string, unsigned long long> extract_logins_to_fill(
+    SubsheetOfInterest sheet) {
   auto ws = sheet.worksheet;
-  // Hint: check like this: ws.cell({1}, {1}) == nullptr;
-  // TODO:
-  // In all columns in sheet.cols, except 'name', check that all cells in rows in sheet.rows
-  // are not null.
+  std::string login_prefix = "user";
+  unsigned long long login_highest = 0;
+  std::vector<xlnt::cell> logins_to_fill;
+  for (auto row : sheet.rows) {
+    const auto login_cell = ws.cell({sheet.cols.login}, row);
+    if (login_cell == nullptr) {
+      logins_to_fill.push_back(login_cell);
+      continue;
+    }
+    std::string login = login_cell.to_string();
+    if (login.empty()) {
+      logins_to_fill.push_back(login_cell);
+      continue;
+    }
+    auto pos = login.find_last_not_of("0123456789");
+    if (pos == std::string::npos || pos + 1 == login.size()) continue;
+    unsigned long long number;
+    auto parsed = std::from_chars(login.data() + pos + 1, login.data() + login.size(), number);
+    if (parsed.ec != std::errc{} || parsed.ptr != login.data() + login.size()) continue;
+    if (number >= login_highest) {
+      login_highest = number;
+      login_prefix = login.substr(0, pos + 1);
+    }
+  }
+  return {std::move(logins_to_fill), login_prefix, login_highest};
+}
+
+std::vector<xlnt::cell> extract_passwords_to_fill(SubsheetOfInterest sheet) {
+  return sheet.rows |
+         std::views::transform([ws = sheet.worksheet, col = sheet.cols.password](xlnt_index_t ri) {
+           return ws.cell({col}, ri);
+         }) |
+         std::views::cache_latest |
+         std::views::filter([](xlnt::cell cell) { return cell != nullptr; }) |
+         std::ranges::to<std::vector<xlnt::cell>>();
+}
+
+std::pair<std::vector<xlnt::cell>, std::optional<std::string>> extract_contests_to_fill(
+    SubsheetOfInterest sheet) {
+  std::pair<std::vector<xlnt::cell>, std::optional<std::string>> res;
+  auto& [to_fill, content] = res;
+  auto ws = sheet.worksheet;
+  for (auto row : sheet.rows) {
+    const auto cell = ws.cell({sheet.cols.contests}, row);
+    if (cell == nullptr) {
+      to_fill.push_back(cell);
+      continue;
+    }
+    auto s = cell.to_string();
+    if (s.empty()) {
+      to_fill.push_back(cell);
+      continue;
+    }
+    if (!content) content.emplace(std::move(s));
+  }
+  return res;
 }
 
 }  // namespace
@@ -142,41 +210,87 @@ bool check_completeness(SubsheetOfInterest sheet) {
 XLSheet::XLSheet(xlnt::path path) : filename{path} {}
 
 std::expected<XLSheet::Info, std::string> XLSheet::Check() const {
-  // TODO:
-  // use open_wb.
-  // call check_wb.
-  // if returned an empty optional, report that no worksheet matched.
-  // Otherwise, report check_completeness as completeness and rows.size() as row count.
+  using ret_t = std::expected<XLSheet::Info, std::string>;
+  return open_wb(filename.string()).and_then([this](xlnt::workbook wb) -> ret_t {
+    auto sheet = check_wb(wb);
+    if (!sheet) return std::unexpected(error_message_no_worksheets_matched(filename.string()));
+    return {{sheet->rows.size(), check_completeness(*sheet)}};
+  });
 }
 
 std::expected<void, std::string> XLSheet::Complete() const {
-  // TODO:
-  // use open_wb.
-  // call check_wb.
-  // if returned an empty optional, report that no worksheet matched.
-  // Otherwise, fill in the passwords, logins, and contest lists on appropriate rows.
-  // Passwords are random, use passswords.hpp.
-  // Logins are of the form "something1234"; find the one with the highest number at the end and
-  // fill the empty cells with increments of that number and the same prefix.
-  // Do not consider existing logins of the wrong format.
-  // If there are no logins of the right format, use the prefix "user" and start with 1.
-  // Copy contents of one of the non-empty contest cells.
-  // Save the workbook if no errors so far.
-  // If there are no non-empty contest cells, report that as a std::unexpected, but still save the
-  // workbook.
+  auto wb = open_wb(filename.string());
+  if (!wb) return std::unexpected(wb.error());
+  auto sheet = check_wb(*wb);
+  if (!sheet) return std::unexpected(error_message_no_worksheets_matched(filename.string()));
+
+  // TODO
+  // instead of what is below, use the new extract_*_to_fill functions to make the implementation
+  // clean.
+
+  // std::optional<xlnt::cell> contests;
+  // for (auto row : sheet->rows) {
+  //   auto contest = ws.cell({sheet->cols.contests}, row);
+  //   if (!(contest == nullptr) && !contests) contests = contest;
+  //   const auto login_cell = ws.cell({sheet->cols.login}, row);
+  //   if (login_cell == nullptr) {
+  //     logins_to_fill.push_back(login_cell);
+  //     continue;
+  //   }
+  //   std::string login = login_cell.to_string();
+  //   auto pos = login.find_last_not_of("0123456789");
+  //   if (pos == std::string::npos || pos + 1 == login.size()) continue;
+  //   unsigned long long number;
+  //   auto parsed = std::from_chars(login.data() + pos + 1, login.data() + login.size(), number);
+  //   if (parsed.ec != std::errc{} || parsed.ptr != login.data() + login.size()) continue;
+  //   if (number >= login_highest) {
+  //     login_highest = number;
+  //     login_prefix = login.substr(0, pos + 1);
+  //   }
+  // }
+  // const auto missing_logins = std::ranges::count_if(
+  //     sheet->rows, [&](auto row) { return ws.cell({sheet->cols.login}, row) == nullptr; });
+  // // if (static_cast<unsigned long long>(missing_logins) >
+  // //     std::numeric_limits<unsigned long long>::max() - highest)
+  // //   return std::unexpected("Login numbering would overflow.");
+  // for (int i 
+  // PasswordGenerator passwords;
+  // for (auto row : sheet->rows) {
+  //   auto login = ws.cell({sheet->cols.login}, row);
+  //   if (login == nullptr) login.value(prefix + std::to_string(++highest));
+  //   auto password = ws.cell({sheet->cols.password}, row);
+  //   if (password == nullptr) password.value(passwords(12));
+  //   auto contest = ws.cell({sheet->cols.contests}, row);
+  //   if (contest == nullptr && contests) contest.value(*contests);
+  // }
+  // try {
+  //   wb->save(filename);
+  // } catch (const std::exception& exc) {
+  //   return std::unexpected("Could not save workbook: "s + exc.what());
+  // }
+  // if (!contests) return std::unexpected("No non-empty contest cells were found.");
+  // return {};
 }
 
 std::expected<std::string, std::string> XLSheet::FormatForCodeforcesUTF8() const {
-  // TODO:
-  // Codeforces expects the following format for each user:
-  //
-  // contests | login | password | name
-  // contests | login | password | name
-  // ...
-  //
-  // extract the data and return the '\n'-separated lines as a string.
+  auto wb = open_wb(filename.string());
+  if (!wb) return std::unexpected(wb.error());
+  auto sheet = check_wb(*wb);
+  if (!sheet) return std::unexpected(error_message_no_worksheets_matched(filename.string()));
+  std::ostringstream result;
+  bool first_row = true;
+  for (auto row : sheet->rows) {
+    if (!first_row) result << '\n';
+    first_row = false;
+    bool first_col = true;
+    for (auto col :
+         {sheet->cols.contests, sheet->cols.login, sheet->cols.password, sheet->cols.name}) {
+      if (!first_col) result << " | ";
+      first_col = false;
+      result << sheet->worksheet.cell({col}, row).to_string();
+    }
+  }
+  return std::move(result).str();
 }
 
-const xlnt::path& XLSheet::Filename() const {
-  return filename;
-}
+const xlnt::path& XLSheet::Filename() const { return filename; }

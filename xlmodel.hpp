@@ -5,6 +5,7 @@
 using xlnt_index_t = xlnt::column_t::index_t;
 
 class XLSheet {
+public:
   struct Info {
     size_t participant_count;
     bool complete;

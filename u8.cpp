@@ -1,6 +1,8 @@
 #include "u8.hpp"
 
 #include <cstdint>
+#include <limits>
+#include <cctype>
 
 constexpr unsigned char u8_char_size[]{
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -46,7 +48,7 @@ std::u32string u8_to_u32(std::string_view s) {
     uint32_t val = static_cast<uint32_t>(s[i]) & ((1U << (7 - w)) - 1);
     for (++i; i < end; ++i) {
       uint32_t ch = static_cast<unsigned char>(s[i]);
-      if ((ch & 0xc0) != 0xc0) {
+      if ((ch & 0xc0) != 0x80) {
         val = std::numeric_limits<uint32_t>::max();
         i = end;
         break;
@@ -61,13 +63,17 @@ std::u32string u8_to_u32(std::string_view s) {
 
 template <class TChar>
 std::basic_string_view<TChar> trim(std::basic_string_view<TChar> sv) {
+  auto is_space = [](TChar ch) {
+    if (ch < 0) return false;
+    return ch <= 127 && std::isspace(static_cast<int>(ch));
+  };
   size_t n = sv.size();
   size_t start = 0;
-  for (; start < n && std::isspace(static_cast<int>(sv[start])); ++start);
+  for (; start < n && is_space(sv[start]); ++start);
   if (start == n) return std::basic_string_view<TChar>();
   size_t end = n;
-  for (; end > start && std::isspace(static_cast<int>(sv[end - 1])); --end);
-  return sv.subview(start, end - start);
+  for (; end > start && (is_space(sv[end - 1])); --end);
+  return sv.substr(start, end - start);
 }
 
 template std::basic_string_view<char> trim<char>(std::basic_string_view<char>);
