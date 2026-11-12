@@ -95,7 +95,7 @@ std::optional<SubsheetOfInterest> check_sheet(xlnt::worksheet ws) {
     for (auto cell :
          xlnt::range(ws, xlnt::range_reference({name_v}, min_row + 1, {name_v}, max_row),
                      xlnt::major_order::column, true)[0]) {
-      rows.emplace_back(cell.row());
+      if (cell != nullptr) rows.emplace_back(cell.row());
     }
   return {{ws, {*contests, *login, *password, name_v}, std::move(rows)}};
 }
